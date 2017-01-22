@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+__igloo_bash::lib::util::sync::get_module_realpath() {
+  if hash realpath 2>/dev/null; then
+    printf "$(realpath "${BASH_SOURCE[0]}")"
+  else
+    printf "$(readlink "${BASH_SOURCE[0]}")"
+  fi
+}
+
+__igloo_bash::lib::util::sync::get_self_name() {
+  printf "$(basename $(__igloo_bash::lib::util::sync::get_module_realpath))"
+}
+
+__igloo_bash::lib::util::sync::get_home_dir() {
+  printf "$(dirname $(__igloo_bash::lib::util::sync::get_module_realpath))"
+}
+
+__igloo_bash::lib::util::sync::log_error() {
+  printf "\e[31m%b\e[0m\n" "✖ $*" 1>&2
+}
+
+__igloo_bash::lib::util::sync::log_warning() {
+  printf "\e[33m%b\e[0m\n" "❢ $*"
+}
+
+__igloo_bash::lib::util::sync::log_success() {
+  printf "\e[32m%b\e[0m\n" "✔ $*"
+}
+
+__igloo_bash::lib::util::sync::log_info() {
+  printf "\e[34m%b\e[0m\n" "➜ $*"
+}
+
+__igloo_bash::lib::util::sync::log_debug() {
+  if [ "$IGLOO_BASH_LIB_UTIL_SYNC_DEBUG" = true ]; then
+    printf "\e[01;30m[%s] \e[0;35m%b\e[0m\n" "$(\date "+%Y-%m-%d %H:%M:%S")" "$*"
+  fi
+}
+
+__igloo_bash::lib::util::sync::cleanup() {
+  typeset -A funcs
+
+  if [ "$(basename $0)" = "bash" ]; then
+    funcs=$(typeset -F | awk '{print $3}')
+  else
+    funcs=$(typeset -f | awk '!/^main[ (]/ && /^[^ {}]+ *\(\)/ { gsub(/[()]/, "", $1); print $1}')
+  fi
+  
+  __igloo_bash::lib::util::sync::log_debug "[$_self_name] Unset declared functions:\n$funcs"
+  for f in $funcs; do
+    unset -f $f
+  done
+}
+
+__igloo_bash::lib::util::sync::handle_trap() {
+  __igloo_bash::lib::util::sync::util::spinner::handle_trap_sigint
+  trap "" SIGINT SIGTERM
+  __igloo_bash::lib::util::sync::log_debug "[$_self_name] Handled trap"
+  __igloo_bash::lib::util::sync::abort 1
+}
+
+__igloo_bash::lib::util::sync::exit() {
+  [ $# = 0 ] && __igloo_bash::lib::util::sync::exit 1
+
+  if [ $1 = 0 ]; then
+    __igloo_bash::lib::util::sync::cleanup
+    exit 0
+  else
+    __igloo_bash::lib::util::sync::log_error "$_self_name exited with errors"
+    __igloo_bash::lib::util::sync::cleanup
+    exit $1
+  fi
+}
+
+__igloo_bash::lib::util::sync::abort() {
+  __igloo_bash::lib::util::sync::log_warning "$_self_name abborted by user"
+  __igloo_bash::lib::util::sync::cleanup
+  exit $1
+}
+
+__igloo_bash::lib::util::sync::validate_dependencies() {
+  for dep in $dependencies; do
+    if ! hash $dep 2>/dev/null; then
+      __igloo_bash::lib::util::sync::log_error "[$_self_name] Error while validating dependency $dep"
+      __igloo_bash::lib::util::sync::exit 1
+    fi
+  done
+}
+
+__igloo_bash::lib::util::sync::is_valid_device_mountpoint() {
+  local label=$(findmnt --noheadings --raw --evaluate --output=label UUID=${_igloo_bash_lib_util_sync_device_config[1]})
+  local uuid=$(findmnt --noheadings --raw --evaluate --output=uuid LABEL=${_igloo_bash_lib_util_sync_device_config[0]})
+  local mountpoint=$(findmnt --noheadings --raw --evaluate --output=target UUID=${_igloo_bash_lib_util_sync_device_config[1]})
+  
+  [ "$label" = "${_igloo_bash_lib_util_sync_device_config[0]}" ] && : || return 1
+  [ "$uuid" = "${_igloo_bash_lib_util_sync_device_config[1]}" ] && : || return 1
+  [ "$mountpoint" = "${_igloo_bash_lib_util_sync_device_config[2]}" ] && : || return 1
+  __igloo_bash::lib::util::sync::log_debug "[$_self_name] Validated $(basename $1) device configuration:\n\
+  label=$label, UUID=$uuid, mountpoint=$mountpoint"
+  return 0
+}
+
+__igloo_bash::lib::util::sync::get_device_mountpoint() {
+  if [ "$#" -eq 0 ]; then
+    __igloo_bash::lib::util::sync::log_error "[$_self_name#$FUNCNAME] Device name parameter must not be null or empty"
+    return 1
+  fi
+  printf "$(findmnt --noheadings --raw --evaluate --output=target LABEL=$1)"
+}
+
+__igloo_bash::lib::util::sync::detect_available_devices() {
+  local devs=$(find -H "$IGLOO_BASH_LIB_UTIL_SYNC_HOME/config/dev" -maxdepth 1 -type f)
+
+  for dev in $devs; do
+    . $dev
+    if __igloo_bash::lib::util::sync::is_valid_device_mountpoint $dev; then
+      _igloo_bash_lib_util_sync_devices+=("$(basename $dev)")
+      __igloo_bash::lib::util::sync::log_debug "[$_self_name] Detected compatible mounted device $dev"
+    fi
+  done
+}
+
+__igloo_bash::lib::util::sync::load__module() {
+  if [ "$#" -eq 0 ]; then
+    __igloo_bash::lib::util::sync::log_debug "[$_self_name] Missing parameter while calling function $FUNCNAME"
+    __igloo_bash::lib::util::sync::log_error "[$_self_name] Error while loading modules"
+    __igloo_bash::lib::util::sync::exit
+  fi
+  local module
+  
+  for module in $*; do
+    module=$IGLOO_BASH_LIB_UTIL_SYNC_HOME/$module
+    if [ -f $module ]; then
+      . $module
+      if [ $? -eq 0 ]; then
+        __igloo_bash::lib::util::sync::log_debug "[$_self_name] Module $(basename $module) successfully loaded"
+      else
+        __igloo_bash::lib::util::sync::log_debug "[$_self_name] Error while loading module $(basename $module)"
+      fi
+    else
+      __igloo_bash::lib::util::sync::log_error "[$_self_name] Module $(basename $module) not found"
+      __igloo_bash::lib::util::sync::exit
+    fi
+  done
+}
+
+__igloo_bash::lib::util::sync::detect_available_host_configs() {
+  local configs=$(find -L "$IGLOO_BASH_LIB_UTIL_SYNC_HOME/config" -maxdepth 1 -type f)
+
+  for config in $configs; do
+    host=$(__igloo_bash::lib::util::sync::util::string::get_file_name $config)
+    device="$(__igloo_bash::lib::util::sync::util::string::get_file_extension $config)"
+
+    if [ "$host" = "$HOSTNAME" ]; then
+      if __igloo_bash::lib::util::sync::util::array::contains_element "$device" "${_igloo_bash_lib_util_sync_devices[@]}"; then
+        _igloo_bash_lib_util_sync_configs+=("$config")
+        __igloo_bash::lib::util::sync::log_debug "[$_self_name] Detected compatible host ($host) configuration for device $device"
+      fi
+    fi
+  done
+}
+
+__igloo_bash::lib::util::sync::get_available_devices() {
+  for dev in "${_igloo_bash_lib_util_sync_devices[@]}"; do
+    printf "$dev\n"
+  done
+}
+
+__igloo_bash::lib::util::sync::count_available_devices() {
+  printf "${#_igloo_bash_lib_util_sync_devices[@]}"
+}
+
+__igloo_bash::lib::util::sync::get_available_configs() {
+  for config in "${_igloo_bash_lib_util_sync_configs[@]}"; do
+    printf "$config\n"
+  done
+}
+
+__igloo_bash::lib::util::sync::count_available_configs() {
+  printf "${#_igloo_bash_lib_util_sync_configs[@]}"
+}
+
+__igloo_bash::lib::util::sync::user_confirmed() {
+  while true; do
+    read input
+    case $input in
+      [Yy])
+        return 0;
+        break;;
+      [Nn])
+        return 1;;
+      * )
+        return 1;;
+    esac
+  done
+}
+
+__igloo_bash::lib::util::sync::is_valid_sync_setup() {
+  if [ $(__igloo_bash::lib::util::sync::count_available_devices) = 0 ]; then
+    __igloo_bash::lib::util::sync::log_warning "No compatible sync devices found"
+    return 1
+  elif [ $(__igloo_bash::lib::util::sync::count_available_configs) = 0 ]; then
+    __igloo_bash::lib::util::sync::log_warning "No compatible sync configurations found"
+    return 1
+  else
+    return 0
+  fi
+}
+
+__igloo_bash::lib::util::sync::run_sync() {
+  local configs=$(__igloo_bash::lib::util::sync::get_available_configs)
+  local device
+  local device_mountpoint
+  local host
+  local log_dir log_file
+  local run_date=$(command date "+%Y-%m-%d_%H%M%S%z")
+
+  for config in $configs; do
+    device=$(__igloo_bash::lib::util::sync::util::string::get_file_extension $config)
+    device_mountpoint=$(__igloo_bash::lib::util::sync::get_device_mountpoint $device)
+    host=$(__igloo_bash::lib::util::sync::util::string::get_file_name $config)
+
+    if [ -z $device_mountpoint ]; then
+      __igloo_bash::lib::util::sync::log_error "Device $device not mounted"
+      __igloo_bash::lib::util::sync::exit 1
+    fi
+
+    if $(mkdir -p $device_mountpoint/.baksynclog &>/dev/null); then
+      log_dir="$device_mountpoint/.baksynclog"
+    else
+      mkdir -p $SNOWBLOCK_BASH_BASE_DIR/.log/lib/util/sync
+      log_dir="$SNOWBLOCK_BASH_BASE_DIR/.log/lib/util/sync"
+    fi
+
+    while IFS="," read -r src dest; do
+      if [[ -z $src || -z $dest ]]; then
+        __igloo_bash::lib::util::sync::log_error "Invalid configuration $(basename $config):"\
+        "source or destination path must not be empty"
+      fi
+      if [[ $src = $device_mountpoint* ]]; then
+        __igloo_bash::lib::util::sync::log_error "Invalid configuration $(basename $config):"\
+        "recursion detection - source path must not be included in the destination path"
+      fi
+      if [[ $dest != $device_mountpoint* ]]; then
+        __igloo_bash::lib::util::sync::log_error "Invalid configuration $(basename $config):"\
+        "destination path must be within $device_mountpoint"
+        __igloo_bash::lib::util::sync::exit 1
+      fi
+
+      if [ ! -e $dest ]; then
+        if $(mkdir -p $dest &>/dev/null); then
+          :
+        else
+          __igloo_bash::lib::util::sync::log_error "Destination path $dest could not be created"
+          __igloo_bash::lib::util::sync::exit 1
+        fi
+      fi
+
+      log_file="$log_dir/$host-$run_date"
+      printf "\n[$_self_name] ========= $src -> $dest =========\n\n" >> $log_file
+
+      __igloo_bash::lib::util::sync::util::spinner::lock
+      __igloo_bash::lib::util::sync::util::spinner::run "$(__igloo_bash::lib::util::sync::util::spinner::message "$src -> $dest")" &
+      rsync --recursive --archive --human-readable --progress --stats --verbose $src $dest &>> $log_file
+      sleep 1
+      if [ $? -gt 0 ]; then
+        __igloo_bash::lib::util::sync::util::spinner::log_error "$src -> $dest"
+        __igloo_bash::lib::util::sync::util::spinner::unlock
+        __igloo_bash::lib::util::sync::exit 1
+      else
+        __igloo_bash::lib::util::sync::util::spinner::log_success "$src -> $dest"
+      fi
+      __igloo_bash::lib::util::sync::util::spinner::unlock
+    done < "$config"
+
+    if [ $? -gt 0 ]; then
+      __igloo_bash::lib::util::sync::util::spinner::log_error "Unexpected error during sync"
+      __igloo_bash::lib::util::sync::exit 1
+    else
+      __igloo_bash::lib::util::sync::util::spinner::log_success "Successfully synced $host > $device"
+      __igloo_bash::lib::util::sync::exit 0
+    fi
+  done
+}
+
+IGLOO_BASH_LIB_UTIL_SYNC_DEBUG=false
+IGLOO_BASH_LIB_UTIL_SYNC_HOME="$(__igloo_bash::lib::util::sync::get_home_dir)"
+_self_name="$(__igloo_bash::lib::util::sync::get_self_name)"
+_dependencies=("findmnt")
+_igloo_bash_lib_util_sync_devices=()
+_igloo_bash_lib_util_sync_configs=()
+
+__igloo_bash::lib::util::sync::load__module util/array util/string util/spinner
+trap "__igloo_bash::lib::util::sync::handle_trap; trap - SIGINT SIGTERM" SIGINT SIGTERM
+
+__igloo_bash::lib::util::sync::validate_dependencies
+
+__igloo_bash::lib::util::sync::log_info "Searching for compatible devices..."
+__igloo_bash::lib::util::sync::detect_available_devices
+
+__igloo_bash::lib::util::sync::log_info "Searching for matching host configurations..."
+__igloo_bash::lib::util::sync::detect_available_host_configs
+
+__igloo_bash::lib::util::sync::log_info "Compatible devices ($(__igloo_bash::lib::util::sync::count_available_devices))"
+for d in ${_igloo_bash_lib_util_sync_devices[@]}; do
+  printf "  • $d\n"
+done
+
+__igloo_bash::lib::util::sync::log_info "Host configurations ($(__igloo_bash::lib::util::sync::count_available_configs))"
+for c in ${_igloo_bash_lib_util_sync_configs[@]}; do
+  printf "  • $(basename $c)\n"
+done
+
+if __igloo_bash::lib::util::sync::is_valid_sync_setup; then
+  __igloo_bash::lib::util::sync::log_info "Start sync? (y/n)"
+  if __igloo_bash::lib::util::sync::user_confirmed; then
+    __igloo_bash::lib::util::sync::run_sync
+  else
+    __igloo_bash::lib::util::sync::abort 0
+  fi
+else
+  __igloo_bash::lib::util::sync::exit 0
+fi
