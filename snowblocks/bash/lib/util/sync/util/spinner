@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+typeset -g _spin_lock_file=/tmp/.igloo_bash_lib_util_sync_spin.$$$RANDOM
+typeset -g _spinner_pid=$$
+
+__igloo_bash::lib::util::sync::util::spinner::get_module_realpath() {
+  if hash realpath 2>/dev/null; then
+    printf "$(realpath "${BASH_SOURCE[0]}")"
+  else
+    printf "$(readlink "${BASH_SOURCE[0]}")"
+  fi
+}
+
+__igloo_bash::lib::util::sync::util::spinner::get_self_name() {
+  printf "$(basename $(__igloo_bash::lib::util::sync::util::spinner::get_module_realpath))"
+}
+
+__igloo_bash::lib::util::sync::util::spinner::get_spinner_pid() {
+  printf "$_spinner_pid"
+}
+
+__igloo_bash::lib::util::sync::util::spinner::handle_trap_sigint() {
+  __igloo_bash::lib::util::sync::util::spinner::unlock
+  unset -v _spinner_pid _spin_lock_file
+  __igloo_bash::lib::util::sync::log_debug "[$(__igloo_bash::lib::util::sync::util::spinner::get_self_name)] Handled trap"
+}
+
+__igloo_bash::lib::util::sync::util::spinner::log_error() {
+  printf "\r\e[0K\r\e[31m%s\e[0m\n" "✖ $*"
+}
+
+__igloo_bash::lib::util::sync::util::spinner::log_success() {
+  printf "\r\e[0K\r\e[32m%s\e[0m\n" "✔ $*"
+}
+
+__igloo_bash::lib::util::sync::util::spinner::log_warning() {
+  printf "\r\e[0K\r\e[33m%s\e[0m\n" "❢ $*"
+}
+__igloo_bash::lib::util::sync::util::spinner::message() {
+  printf "\e[34m%s\e[0m\r" "➜ $*"
+}
+
+__igloo_bash::lib::util::sync::util::spinner::is_spin() {
+  [[ -f $_spin_lock_file ]]
+}
+
+__igloo_bash::lib::util::sync::util::spinner::lock() {
+  if ! __igloo_bash::lib::util::sync::util::spinner::is_spin; then
+    set +m
+    __igloo_bash::lib::util::sync::log_debug "[$(__igloo_bash::lib::util::sync::util::spinner::get_self_name)] locked ($_spin_lock_file)"
+    touch $_spin_lock_file &>/dev/null
+  fi
+}
+
+__igloo_bash::lib::util::sync::util::spinner::unlock() {
+  if __igloo_bash::lib::util::sync::util::spinner::is_spin; then
+    __igloo_bash::lib::util::sync::log_debug "[$(__igloo_bash::lib::util::sync::util::spinner::get_self_name)] unlocked ($_spin_lock_file)"
+    rm -f $_spin_lock_file &>/dev/null
+  fi
+}
+
+# Shows a spinner with the specified message.
+#
+# Workflow
+# ========
+# The spinner must be locked before running using the "__igloo_bash::lib::util::sync::util::spinner::lock" function.
+# The message passed to this function can be colorized via "__igloo_bash::lib::util::sync::util::spinner::message".
+# NOTE:
+#   This function MUST BE called as disowned process in order to work by appending the "&" character!
+# The process message can be changed based on the process result by using the corresponding log functions
+#   - __igloo_bash::lib::util::sync::util::spinner::log_error
+#   - __igloo_bash::lib::util::sync::util::spinner::log_success
+#   - __igloo_bash::lib::util::sync::util::spinner::log_warning
+# After the process completed the spinner MUST BE unlocked via "__igloo_bash::lib::util::sync::util::spinner::unlock" to avoid a
+# infinite spinner process loop!
+#
+# Example
+# =======
+# __igloo_bash::lib::util::sync::util::spinner::lock
+# __igloo_bash::lib::util::sync::util::spinner::run "$(__igloo_bash::lib::util::sync::util::spinner::message "shaking yogurt")" &
+# rsync -n --recursive --archive --human-readable --progress --stats ~/yogurt/ cloud/yogurt >/dev/null
+# __igloo_bash::lib::util::sync::util::spinner::log_success "Created coconut milk shake!"
+# __igloo_bash::lib::util::sync::util::spinner::unlock
+#
+# @param $1 the message to show next to the spinner
+__igloo_bash::lib::util::sync::util::spinner::run() {
+  local spinners="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+  local latency=${igloo_bash_lib_util_sync_spinner_latency:-0.40}
+  local msg=$1
+  local i=1
+  
+  while __igloo_bash::lib::util::sync::util::spinner::is_spin; do
+    printf "\r${spinners:i++%${#spinners}:1} $msg"
+    sleep $latency
+  done
+  kill -9 $_spinner_pid > /dev/null 2>&1
+  __igloo_bash::lib::util::sync::log_debug "[$(__igloo_bash::lib::util::sync::util::spinner::get_self_name)] killed process PID $_spinner_pid"
+}
