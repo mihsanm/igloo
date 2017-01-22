@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+__igloo_bash::lib::util::sync::util::string::get_module_realpath() {
+  if hash realpath 2>/dev/null; then
+    printf "$(realpath "${BASH_SOURCE[0]}")"
+  else
+    printf "$(readlink "${BASH_SOURCE[0]}")"
+  fi
+}
+
+__igloo_bash::lib::util::sync::util::string::get_self_name() {
+  printf "$(basename $(__igloo_bash::lib::util::sync::util::string::get_module_realpath))"
+}
+
+__igloo_bash::lib::util::sync::util::string::get_file_basename() {
+  if [ "$#" -eq 0 -o -z $1 ]; then
+    __igloo_bash::lib::util::sync::log_debug "[$(__igloo_bash::lib::util::sync::util::string::get_self_name)#$FUNCNAME]\
+    file path must not be null or empty"
+    return 1
+  else
+    printf "$(basename "$1")"
+  fi
+}
+
+__igloo_bash::lib::util::sync::util::string::get_file_name() {
+  if [ "$#" -eq 0 -o -z $1 ]; then
+    __igloo_bash::lib::util::sync::log_debug "[$FUNCNAME] file path must not be null or empty"
+    return 1
+  else
+    local basename="$(__igloo_bash::lib::util::sync::util::string::get_file_basename $1)"
+    printf "${basename%.*}"
+  fi
+}
+
+__igloo_bash::lib::util::sync::util::string::get_file_extension() {
+  if [ "$#" -eq 0 -o -z $1 ]; then
+    __igloo_bash::lib::util::sync::log_debug "[$FUNCNAME] file path must not be null or empty"
+    return 1
+  else
+    local basename="$(__igloo_bash::lib::util::sync::util::string::get_file_basename $1)"
+    printf "${basename##*.}"
+  fi
+}
