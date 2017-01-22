@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# NOTE: The order of the array entries is crucial!
+#   [0] LABEL
+#   [1] UUID
+#   [2] MOUNTPOINT
+_igloo_bash_lib_util_sync_device_config=(icemirror dda278e6-4f16-45a1-a7be-f3dce76d6602 /mnt/icemirror)
