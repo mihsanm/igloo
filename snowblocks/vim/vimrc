@@ -19,6 +19,7 @@ call plug#begin(expand('~/.vim/plugged'))
 Plug 'mattn/emmet-vim'
 Plug 'davidhalter/jedi-vim'
 Plug 'Townk/vim-autoclose'
+Plug 'chiel92/vim-autoformat'
 Plug 'tpope/vim-fugitive'
 if v:version >= 704
   Plug 'honza/vim-snippets'
